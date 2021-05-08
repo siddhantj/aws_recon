@@ -15,7 +15,7 @@ destination_path = 'adx-cpi/aae4c2cd145a48454f9369d4a4db5c66/'
 threshold_time = 300
 
 def send_email(*,DataSetId, RevisionId, DeltaTime):
-    topic_arn = 'arn:aws:sns:us-east-1:304289345267:dev_heartbeat_slafailure'
+    topic_arn = 'arn:aws:sns:us-east-1:304289345267:heartbeat_recon_topic'
     message = 'SLA violation for heartbeat by {}'.format(DeltaTime)
     subject = 'SLA violated'
     sns.publish(TopicArn=topic_arn, Message=message, Subject=subject)
@@ -44,7 +44,7 @@ def lambda_handler(event, context):
                 print("S3 store time: {}".format(s3_store_time))
                 delta = s3_store_time - created_date_adx
                 print('Delta in seconds: {}'.format(delta.total_seconds()))
-                if delta.total_seconds() >= threshold_time:
+                if delta.total_seconds() < threshold_time:
                     # Send email to notifier
                     send_email(DataSetId=dataset_id, RevisionId=revision_id, DeltaTime=delta.total_seconds())
 

@@ -1,22 +1,27 @@
+locals {
+  lambda_zip_name    = "heartbeat_recon_lambda.zip"
+}
+
 resource "aws_cloudwatch_event_rule" "heartbeat_recon_event" {
   name                      = "heartbeat_recon_event"
   description               = "Generate event every 5 min to check for SLA violation for heartbeat dataset"
   schedule_expression       = "rate(5 minutes)"
-  tags                      = "heartbeat_recon" #${env}_heartbeat_recon
+  tags                      = {"cloudwatch_event_rate" : "heartbeat_recon"} #${env}_heartbeat_recon
 }
 
+
 resource "aws_cloudwatch_event_target" "target_heartbeat_recon_lambda" {
-  rule      = aws_cloudwatch_event_rule.heartbeat_recon_event
+  rule      = aws_cloudwatch_event_rule.heartbeat_recon_event.name
   target_id = "SendToHeartBeatReconLambda"
-  arn       = aws_lambda_function.heartbeat_recon_lambda
+  arn       = aws_lambda_function.heartbeat_recon_lambda.arn
 }
 
 # Lambda related resources
 data "archive_file" "heartbeat_recon_lambda_zip" {
   type             = "zip"
-  source_file      = "${path.module}/heartbeat_recon/src/heartbeat_recon_lambda"
+  source_dir      = "${path.module}/heartbeat_recon_lambda"
   output_file_mode = "0666"
-  output_path      = "${path.module}/heartbeat_recon/src/heartbeat_recon_lambda.zip"
+  output_path      = "${path.module}/heartbeat_recon_lambda.zip"
 }
 
 # Create Lambda Execution Role
@@ -31,7 +36,7 @@ resource "aws_iam_role" "heartbeat_recon_role" {
           Service = "lambda.amazonaws.com"
         },
         Action = "sts:AssumeRole",
-        Sid = "Assumed role by heartbeat lambda fxn"
+        Sid = "AssumedRoleByHeartbeatLambdaFxn"
       }
     ]
   })
@@ -52,7 +57,7 @@ resource "aws_iam_role_policy" "heartbeat_recon_lambda_role_policy" {
           "dataexchange:GetRevision",
           "dataexchange:ListDataSetRevisions"
         ]
-        Resource = "arn:aws:dataexchange:us-east-1::data-sets/aae4c2cd145a48454f9369d4a4db5c66" # use * if this doesn't work
+        Resource = "*"
       },
       {
         Effect   = "Allow",
@@ -68,8 +73,10 @@ resource "aws_iam_role_policy" "heartbeat_recon_lambda_role_policy" {
       },
       {
         Effect   = "Allow",
-        Action   = "sns:PublishMessage",
-        Resource = aws_sns_topic.heartbeat_recon_topic.arn #  TODO replace with SNS topic
+        Action   = [
+          "sns:*"
+        ]
+        Resource = aws_sns_topic.heartbeat_recon_topic.arn
       },
       {
         Effect = "Allow",
@@ -101,15 +108,23 @@ resource "aws_lambda_function" "heartbeat_recon_lambda" {
   timeout                         = 300
   reserved_concurrent_executions  = 1
   # vpc_config TODO need to add
-  filename                        = data.archive_file.heartbeat_recon_lambda_zip.output_path
+  filename                        = local.lambda_zip_name
   source_code_hash                = data.archive_file.heartbeat_recon_lambda_zip.output_base64sha256
   tags                            = {"lambda" : "heartbeat_recon_lambda"}
 }
 
-# Cloudwatch event will trigger lambda function
-resource "aws_lambda_event_source_mapping" "s3ExportLambdaTrigger" {
-  event_source_arn = aws_cloudwatch_event_rule.heartbeat_recon_event.arn
-  function_name    = aws_lambda_function.heartbeat_recon_lambda.function_name
+# Cloudwatch event will trigger lambda function.
+# Terraform only lets sources be Kinesis, DynamoDB, SQS and Managed Streaming for Apache Kafka (MSK)
+//resource "aws_lambda_event_source_mapping" "s3ExportLambdaTrigger" {
+//  event_source_arn = aws_cloudwatch_event_rule.heartbeat_recon_event.arn
+//  function_name    = aws_lambda_function.heartbeat_recon_lambda.function_name
+//}
+
+resource "aws_lambda_permission" "heartbeat_recon_lambda_permission" {
+  action = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.heartbeat_recon_lambda.function_name
+  principal = "events.amazonaws.com"
+  source_arn = aws_cloudwatch_event_rule.heartbeat_recon_event.arn
 }
 
 resource "aws_sns_topic" "heartbeat_recon_topic" {
@@ -118,31 +133,32 @@ resource "aws_sns_topic" "heartbeat_recon_topic" {
 
 resource "aws_sns_topic_policy" "heartbeat_recon_policy" {
   arn               = aws_sns_topic.heartbeat_recon_topic.arn
-  policy            = data.aws_iam_policy_document.heartbeat_recon_policy_doc.json
+  policy            = data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc.json
 }
 
-data "aws_iam_policy_document" "heartbeat_recon_policy_doc_1" {
+data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_1" {
   policy_id = "__default_policy_ID"
   statement {
     actions = [
-      "SNS:Receive",
       "SNS:Publish",
       "SNS:ListSubscriptionsByTopic",
-      "SNS:GetTopicAttributes"
+      "SNS:GetTopicAttributes",
     ]
     effect = "Allow"
     principals {
       type        = "AWS"
-      identifiers = [aws_lambda_function.heartbeat_recon_lambda.arn]
+      identifiers = [aws_lambda_function.heartbeat_recon_lambda.arn,
+        "arn:aws:sts::304289345267:assumed-role/heartbeat_recon_role/heartbeat_recon_lambda"
+      ]
     }
     resources = [
-      aws_sns_topic.heartbeat_recon_topic.arn,
+      aws_sns_topic.heartbeat_recon_topic.arn
     ]
-    sid = "Policy document for heartbeat_recon_topic in regards to lambda"
+    sid = "PolicyDocumentForheartbeat_recon_topicWRTLambda"
   }
 }
 
-data "aws_iam_policy_document" "heartbeat_recon_policy_doc_2" {
+data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_2" {
   policy_id = "__default_policy_ID"
   statement {
     actions = [
@@ -152,22 +168,26 @@ data "aws_iam_policy_document" "heartbeat_recon_policy_doc_2" {
     resources = ["*"]
     condition {
       test = "StringLike"
-      values = ["*@gs.com"]
+      values = ["*@gmail.com"]
       variable = "sns:endpoint"
+    }
+    principals {
+      identifiers = []
+      type = ""
     }
     condition {
       test = "StringEquals"
       values = ["email"]
       variable = "sns:Protocol"
     }
-    sid = "Policy document for heartbeat_recon_topic to subscribe to email"
+    sid = "PolicyDocumentForheartbeat_recon_topicToSubscribeToEmail"
   }
 }
 
-data "aws_iam_policy_document" "heartbeat_recon_policy_doc" {
+data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc" {
   source_policy_documents = [
-    data.aws_iam_policy_document.heartbeat_recon_policy_doc_1.json,
-    data.aws_iam_policy_document.heartbeat_recon_policy_doc_2.json
+    data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc_1.json,
+    data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc_2.json
   ]
 }
 
@@ -178,3 +198,8 @@ resource "aws_sns_topic_subscription" "heartbeat_recon_failure_email" {
 }
 
 # difference between "aws_iam_policy_document" and "aws_iam_role_policy"
+# TODO: modify lambda fxn. Get names of file, time created on ADX, time available in S3. Send 1 email per event
+# TODO: Check if email filter above works. Eg: StringLike *gs.com and email as siddhantjawa18@gmail.com
+# TODO: SNS topic policy issue
+# TODO: Connect lambda with VPC/security group
+# TODO: Names of the resources and their tags.
