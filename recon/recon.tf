@@ -9,7 +9,6 @@ resource "aws_cloudwatch_event_rule" "heartbeat_recon_event" {
   tags                      = {"cloudwatch_event_rate" : "heartbeat_recon"} #${env}_heartbeat_recon
 }
 
-
 resource "aws_cloudwatch_event_target" "target_heartbeat_recon_lambda" {
   rule      = aws_cloudwatch_event_rule.heartbeat_recon_event.name
   target_id = "SendToHeartBeatReconLambda"
@@ -107,6 +106,15 @@ resource "aws_lambda_function" "heartbeat_recon_lambda" {
   memory_size                     = 256
   timeout                         = 300
   reserved_concurrent_executions  = 1
+  environment {
+    variables = {
+      S3_BUCKET                 = "datas3bucket20210316032041795700000001"
+      SNS_TOPIC_ARN             = aws_sns_topic.heartbeat_recon_topic.arn
+      REGION                    = var.region
+      FAILURE_THRESHOLD_TIME    = var.failure_threshold_time
+      DATASET_ID                = "aae4c2cd145a48454f9369d4a4db5c66"
+    }
+  }
   # vpc_config TODO need to add
   filename                        = local.lambda_zip_name
   source_code_hash                = data.archive_file.heartbeat_recon_lambda_zip.output_base64sha256
@@ -198,8 +206,9 @@ resource "aws_sns_topic_subscription" "heartbeat_recon_failure_email" {
 }
 
 # difference between "aws_iam_policy_document" and "aws_iam_role_policy"
-# TODO: modify lambda fxn. Get names of file, time created on ADX, time available in S3. Send 1 email per event
 # TODO: Check if email filter above works. Eg: StringLike *gs.com and email as siddhantjawa18@gmail.com
 # TODO: SNS topic policy issue
 # TODO: Connect lambda with VPC/security group
 # TODO: Names of the resources and their tags.
+# TODO: Write proper lambda logs
+# TODO: When all testing done, fix the condition delta.total_seconds() < failure_threshold_time to delta.total_seconds() >= failure_threshold_time

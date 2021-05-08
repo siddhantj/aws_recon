@@ -1,30 +1,33 @@
+import os
+os.environ['AWS_DATA_PATH'] = '/opt/'
+
 import json
 from datetime import date
 from datetime import datetime
 import boto3
 
-dataexchange = boto3.client(service_name='dataexchange', region_name='us-east-1')
-s3 = boto3.client( service_name='s3', region_name='us-east-1' )
-sns = boto3.client(service_name='sns', region_name='us-east-1')
-
-dataset_id='aae4c2cd145a48454f9369d4a4db5c66'
-
-bucket = 'datas3bucket20210316032041795700000001'
+bucket = os.environ['S3_BUCKET']
+region = os.environ['REGION']
+sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+failure_threshold_time = float(os.environ['FAILURE_THRESHOLD_TIME']) * 60
+dataset_id = os.environ['DATASET_ID']
 destination_path = 'adx-cpi/aae4c2cd145a48454f9369d4a4db5c66/'
 
-threshold_time = 300
+dataexchange = boto3.client(service_name='dataexchange', region_name=region)
+s3 = boto3.client( service_name='s3', region_name=region )
+sns = boto3.client(service_name='sns', region_name=region)
 
-def send_email(*,DataSetId, RevisionId, DeltaTime):
-    topic_arn = 'arn:aws:sns:us-east-1:304289345267:heartbeat_recon_topic'
-    message = 'SLA violation for heartbeat by {}'.format(DeltaTime)
-    subject = 'SLA violated'
+def send_email(*,DataSetId, RevisionId, Message):
+    topic_arn = sns_topic_arn
+    message = Message
+    subject = 'SLA violated for dataset_id: {}'.format(DataSetId)
     sns.publish(TopicArn=topic_arn, Message=message, Subject=subject)
     print('Sending email')
 
 def lambda_handler(event, context):
-    # print('Recon function: {}'.format(event))
-    # print('Context: {}'.format(context))
-    response = dataexchange.list_data_set_revisions(DataSetId='aae4c2cd145a48454f9369d4a4db5c66', MaxResults=10)
+    print('Cron rate event: {}'.format(event))
+    sla_failure_msg = '' # Email message
+    response = dataexchange.list_data_set_revisions(DataSetId=dataset_id, MaxResults=10)
     revisions = response['Revisions']
     ## get last 5 revisions
     revisions = revisions[-6:]
@@ -41,14 +44,15 @@ def lambda_handler(event, context):
         if (key_count == len(contents)):
             for content in contents:
                 s3_store_time = content['LastModified']
+                filename = content['Key'].split("/")[-1]
                 print("S3 store time: {}".format(s3_store_time))
                 delta = s3_store_time - created_date_adx
                 print('Delta in seconds: {}'.format(delta.total_seconds()))
-                if delta.total_seconds() < threshold_time:
-                    # Send email to notifier
-                    send_email(DataSetId=dataset_id, RevisionId=revision_id, DeltaTime=delta.total_seconds())
+                if delta.total_seconds() < failure_threshold_time:
+                    sla_failure_msg = sla_failure_msg + 'revision_id: {}, file: {}, created_datetime: {}, s3_available_datetime:{}, delta:{}sec \n\n'.format(revision_id, filename, created_date_adx, s3_store_time, delta.total_seconds())
 
-
+    if len(sla_failure_msg) > 0:
+                send_email(DataSetId=dataset_id, RevisionId=revision_id, Message = sla_failure_msg)
 
     return {
         'statusCode': 200,
