@@ -139,7 +139,7 @@ resource "aws_sns_topic" "heartbeat_recon_topic" {
   name              = "heartbeat_recon_topic"
 }
 
-resource "aws_sns_topic_policy" "heartbeat_recon_policy" {
+resource "aws_sns_topic_policy" "heartbeat_recon_topic_policy" {
   arn               = aws_sns_topic.heartbeat_recon_topic.arn
   policy            = data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc.json
 }
@@ -173,10 +173,12 @@ data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_2" {
       "SNS:Subscribe"
     ]
     effect = "Allow"
-    resources = ["*"]
+    resources = [
+      aws_sns_topic.heartbeat_recon_topic.arn
+    ]
     condition {
       test = "StringLike"
-      values = ["*@gmail.com"]
+      values = ["*@gs.com"]
       variable = "sns:endpoint"
     }
     principals {
