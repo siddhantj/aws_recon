@@ -154,10 +154,8 @@ data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_1" {
     ]
     effect = "Allow"
     principals {
-      type        = "AWS"
-      identifiers = [aws_lambda_function.heartbeat_recon_lambda.arn,
-        "arn:aws:sts::304289345267:assumed-role/heartbeat_recon_role/heartbeat_recon_lambda"
-      ]
+      type = "Service"
+      identifiers = ["lambda.amazonaws.com"]
     }
     resources = [
       aws_sns_topic.heartbeat_recon_topic.arn
@@ -166,38 +164,9 @@ data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_1" {
   }
 }
 
-data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc_2" {
-  policy_id = "__default_policy_ID"
-  statement {
-    actions = [
-      "SNS:Subscribe"
-    ]
-    effect = "Allow"
-    resources = [
-      aws_sns_topic.heartbeat_recon_topic.arn
-    ]
-    condition {
-      test = "StringLike"
-      values = ["*@gs.com"]
-      variable = "sns:endpoint"
-    }
-    principals {
-      identifiers = []
-      type = ""
-    }
-    condition {
-      test = "StringEquals"
-      values = ["email"]
-      variable = "sns:Protocol"
-    }
-    sid = "PolicyDocumentForheartbeat_recon_topicToSubscribeToEmail"
-  }
-}
-
 data "aws_iam_policy_document" "heartbeat_recon_topic_policy_doc" {
   source_policy_documents = [
     data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc_1.json,
-    data.aws_iam_policy_document.heartbeat_recon_topic_policy_doc_2.json
   ]
 }
 
@@ -208,8 +177,6 @@ resource "aws_sns_topic_subscription" "heartbeat_recon_failure_email" {
 }
 
 # difference between "aws_iam_policy_document" and "aws_iam_role_policy"
-# TODO: Check if email filter above works. Eg: StringLike *gs.com and email as siddhantjawa18@gmail.com
-# TODO: SNS topic policy issue
 # TODO: Connect lambda with VPC/security group
 # TODO: Names of the resources and their tags.
 # TODO: Write proper lambda logs
